@@ -95,6 +95,15 @@ const run = async (): Promise<void> => {
 
     // Set the captured output as an Action output
     setOutput('logs', commandOutput);
+
+    // Extract relevant test results (if needed)
+    const testResults = commandOutput
+      .split('\n')
+      .filter((line) => line.includes('PASSED') || line.includes('FAILED'))
+      .join('\n');
+
+    // Set test results as another output
+    setOutput('testResults', testResults);
   } catch (error) {
     if (typeof error === 'string') {
       setFailed(error);
