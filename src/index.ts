@@ -1,4 +1,4 @@
-import { setFailed } from '@actions/core';
+import { setFailed, setOutput } from '@actions/core';
 import { getParameters } from './methods/params';
 import { execSync } from 'child_process';
 
@@ -81,11 +81,20 @@ const run = async (): Promise<void> => {
       });
     }
 
-    execSync(`npx --yes @devicecloud.dev/dcd cloud  ${paramsString} --quiet`, {
-      stdio: 'inherit',
-    });
+    // Capture the output of the command
+    const commandOutput = execSync(
+      `npx --yes @devicecloud.dev/dcd cloud ${paramsString} --quiet`,
+      {
+        stdio: 'pipe', // Capture output instead of streaming it directly
+        encoding: 'utf-8',
+      }
+    );
 
     console.info('Successfully completed test run.');
+    console.log(commandOutput);
+
+    // Set the captured output as an Action output
+    setOutput('logs', commandOutput);
   } catch (error) {
     if (typeof error === 'string') {
       setFailed(error);
