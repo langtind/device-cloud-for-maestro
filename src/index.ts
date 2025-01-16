@@ -1,6 +1,9 @@
 import { setFailed, setOutput } from '@actions/core';
 import { getParameters } from './methods/params';
 import { spawn } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const escapeShellValue = (value: string): string => {
   return value.replace(/(["\\'$`!\s])/g, '\\$1');
@@ -79,35 +82,39 @@ const run = async (): Promise<void> => {
       });
     }
 
+    // Define temporary files for logs
+    const logFilePath = path.join(os.tmpdir(), 'command_output.log');
+    const testResultsFilePath = path.join(os.tmpdir(), 'test_results.log');
+
     // Run the command as a child process
     const command = `npx --yes @devicecloud.dev/dcd cloud ${paramsString} --quiet`;
     console.info('Running command:', command);
 
     const child = spawn('npx', command.split(' '), { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    let commandOutput = '';
-    let testResults = '';
+    const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+    const testResultsStream = fs.createWriteStream(testResultsFilePath, { flags: 'a' });
 
-    // Capture stdout incrementally
     child.stdout.on('data', (data) => {
       const chunk = data.toString();
-      commandOutput += chunk;
+      logStream.write(chunk);
 
       // Extract relevant lines dynamically
       const filteredLines = chunk
         .split('\n')
         .filter((line) => line.includes('PASSED') || line.includes('FAILED'))
         .join('\n');
-      testResults += filteredLines;
+      testResultsStream.write(filteredLines + '\n');
     });
 
-    // Handle errors from stderr
     child.stderr.on('data', (data) => {
       console.error('Error stream:', data.toString());
     });
 
-    // Handle process exit
     child.on('close', (code) => {
+      logStream.end();
+      testResultsStream.end();
+
       if (code !== 0) {
         console.error(`Command failed with exit code ${code}`);
         setFailed(`Command failed with exit code ${code}`);
@@ -115,7 +122,13 @@ const run = async (): Promise<void> => {
       }
 
       console.info('Successfully completed test run.');
+
+      // Read logs and results from files
+      const commandOutput = fs.readFileSync(logFilePath, 'utf-8');
+      const testResults = fs.readFileSync(testResultsFilePath, 'utf-8');
+
       console.log('Final logs:', commandOutput);
+      console.log('Test results:', testResults);
 
       // Set outputs
       setOutput('logs', commandOutput);
