@@ -1,9 +1,8 @@
 import { setFailed, setOutput } from '@actions/core';
 import { getParameters } from './methods/params';
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 
 const escapeShellValue = (value: string): string => {
-  // Escape special characters that could cause shell interpretation issues
   return value.replace(/(["\\'$`!\s])/g, '\\$1');
 };
 
@@ -74,36 +73,54 @@ const run = async (): Promise<void> => {
         let [key, ...rest] = e.split('=');
         let value = rest.join('=');
         if (value.startsWith('"') && value.endsWith('"')) {
-          // remove quotes so they dont get escaped
           value = value.slice(1, -1);
         }
         paramsString += ` --env ${key}=${escapeShellValue(value)}`;
       });
     }
 
-    // Capture the output of the command
-    const commandOutput = execSync(
-      `npx --yes @devicecloud.dev/dcd cloud ${paramsString} --quiet`,
-      {
-        stdio: 'pipe', // Capture output instead of streaming it directly
-        encoding: 'utf-8',
+    // Run the command as a child process
+    const command = `npx --yes @devicecloud.dev/dcd cloud ${paramsString} --quiet`;
+    console.info('Running command:', command);
+
+    const child = spawn('npx', command.split(' '), { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let commandOutput = '';
+    let testResults = '';
+
+    // Capture stdout incrementally
+    child.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      commandOutput += chunk;
+
+      // Extract relevant lines dynamically
+      const filteredLines = chunk
+        .split('\n')
+        .filter((line) => line.includes('PASSED') || line.includes('FAILED'))
+        .join('\n');
+      testResults += filteredLines;
+    });
+
+    // Handle errors from stderr
+    child.stderr.on('data', (data) => {
+      console.error('Error stream:', data.toString());
+    });
+
+    // Handle process exit
+    child.on('close', (code) => {
+      if (code !== 0) {
+        console.error(`Command failed with exit code ${code}`);
+        setFailed(`Command failed with exit code ${code}`);
+        return;
       }
-    );
 
-    console.info('Successfully completed test run.');
-    console.log(commandOutput);
+      console.info('Successfully completed test run.');
+      console.log('Final logs:', commandOutput);
 
-    // Set the captured output as an Action output
-    setOutput('logs', commandOutput);
-
-    // Extract relevant test results (if needed)
-    const testResults = commandOutput
-      .split('\n')
-      .filter((line) => line.includes('PASSED') || line.includes('FAILED'))
-      .join('\n');
-
-    // Set test results as another output
-    setOutput('testResults', testResults);
+      // Set outputs
+      setOutput('logs', commandOutput);
+      setOutput('testResults', testResults.trim());
+    });
   } catch (error) {
     if (typeof error === 'string') {
       setFailed(error);
