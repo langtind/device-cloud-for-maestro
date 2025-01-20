@@ -102,7 +102,7 @@ const run = async (): Promise<void> => {
       // Extract relevant lines dynamically
       const filteredLines = chunk
         .split('\n')
-        .filter((line) => line.includes('PASSED') || line.includes('FAILED'))
+        .filter((line: string) => line.includes('PASSED') || line.includes('FAILED'))
         .join('\n');
       testResultsStream.write(filteredLines + '\n');
     });
