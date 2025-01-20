@@ -73,6 +73,12 @@ inputs:
     description: 'Number of times to retry the run if it fails (same as pressing retry in the UI, this will deduct credits from your account)'
     required: false
 
+outputs:
+  logs:
+    description: "Log data from the command"
+  testResults:
+    description: "Test results from the command"
+
 runs:
   using: 'node20'
   main: 'dist/index.js'
