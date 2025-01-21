@@ -88,53 +88,106 @@ const run = async (): Promise<void> => {
 
     // Run the command as a child process
     const command = `npx --yes @devicecloud.dev/dcd cloud ${paramsString} --quiet`;
-    console.info('Running command:', command);
+    console.info(`[${new Date().toISOString()}] Running command:`, command);
+    console.info(`[${new Date().toISOString()}] Starting test run`);
 
     const child = spawn('npx', command.split(' '), { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    // Add periodic health check logging
+    const healthCheckInterval = setInterval(() => {
+      console.info(`[${new Date().toISOString()}] Process still running, pid: ${child.pid}`);
+    }, 5 * 60 * 1000); // Log every 5 minutes
 
     const logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
     const testResultsStream = fs.createWriteStream(testResultsFilePath, { flags: 'a' });
 
+    let lastDataReceived = Date.now();
+    let totalBytesReceived = 0;
+
+    logStream.on('error', (error) => {
+      console.error(`[${new Date().toISOString()}] Log stream error:`, error);
+      console.error('Last data received:', new Date(lastDataReceived).toISOString());
+      console.error('Total bytes received:', totalBytesReceived);
+      child.kill();
+      setFailed(`Log stream error: ${error.message}`);
+    });
+
+    testResultsStream.on('error', (error) => {
+      console.error(`[${new Date().toISOString()}] Test results stream error:`, error);
+      console.error('Last data received:', new Date(lastDataReceived).toISOString());
+      console.error('Total bytes received:', totalBytesReceived);
+      child.kill();
+      setFailed(`Test results stream error: ${error.message}`);
+    });
+
     child.stdout.on('data', (data) => {
+      lastDataReceived = Date.now();
+      totalBytesReceived += data.length;
+      console.debug(`[${new Date().toISOString()}] Received ${data.length} bytes of data`);
+
       const chunk = data.toString();
       logStream.write(chunk);
 
-      // Extract relevant lines dynamically
       const filteredLines = chunk
         .split('\n')
         .filter((line: string) => line.includes('PASSED') || line.includes('FAILED'))
         .join('\n');
+      if (filteredLines) {
+        console.info(`[${new Date().toISOString()}] New test results received:`, filteredLines);
+      }
       testResultsStream.write(filteredLines + '\n');
     });
 
     child.stderr.on('data', (data) => {
-      console.error('Error stream:', data.toString());
+      console.error(`[${new Date().toISOString()}] Error stream:`, data.toString());
+    });
+
+    child.on('error', (error) => {
+      console.error(`[${new Date().toISOString()}] Process error:`, error);
+      console.error('Last data received:', new Date(lastDataReceived).toISOString());
+      console.error('Total bytes received:', totalBytesReceived);
+      clearInterval(healthCheckInterval);
+      setFailed(`Process error: ${error.message}`);
     });
 
     child.on('close', (code) => {
+      const endTime = new Date().toISOString();
+      console.info(`[${endTime}] Process closed with code ${code}`);
+      console.info('Last data received:', new Date(lastDataReceived).toISOString());
+      console.info('Total bytes received:', totalBytesReceived);
+      console.info('Time since last data:', Date.now() - lastDataReceived, 'ms');
+
+      clearInterval(healthCheckInterval);
+
       logStream.end();
       testResultsStream.end();
 
       if (code !== 0) {
-        console.error(`Command failed with exit code ${code}`);
+        console.error(`[${endTime}] Command failed with exit code ${code}`);
         setFailed(`Command failed with exit code ${code}`);
         return;
       }
 
       console.info('Successfully completed test run.');
 
-      // Read logs and results from files
-      const commandOutput = fs.readFileSync(logFilePath, 'utf-8');
-      const testResults = fs.readFileSync(testResultsFilePath, 'utf-8');
+      try {
+        // Read logs and results from files
+        const commandOutput = fs.readFileSync(logFilePath, 'utf-8');
+        const testResults = fs.readFileSync(testResultsFilePath, 'utf-8');
 
-      console.log('Final logs:', commandOutput);
-      console.log('Test results:', testResults);
+        console.log('Final logs:', commandOutput);
+        console.log('Test results:', testResults);
 
-      // Set outputs
-      setOutput('logs', commandOutput);
-      setOutput('testResults', testResults.trim());
+        // Set outputs
+        setOutput('logs', commandOutput);
+        setOutput('testResults', testResults.trim());
+      } catch (error) {
+        console.error('Error reading output files:', error);
+        setFailed(`Error reading output files: ${(error as Error).message}`);
+      }
     });
   } catch (error) {
+    console.error(`[${new Date().toISOString()}] Unexpected error:`, error);
     if (typeof error === 'string') {
       setFailed(error);
     } else {
